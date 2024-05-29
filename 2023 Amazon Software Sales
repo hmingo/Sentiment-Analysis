@@ -1,0 +1,150 @@
+# Sentiment Analysis of 2023 Amazon Software Sales
+import gzip
+import json
+import pandas as pd
+# import numpy as np
+from nltk.corpus import stopwords
+from nltk.tokenize import word_tokenize
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.model_selection import train_test_split
+from sklearn.linear_model import LogisticRegression
+from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
+from textblob import TextBlob
+import nltk
+from sklearn.metrics import (
+    accuracy_score,
+    precision_score,
+    recall_score,
+    f1_score,
+    classification_report,
+)
+from tqdm import tqdm
+
+nltk.download("stopwords")
+nltk.download("punkt")
+
+# Load Data
+def load_data(filepath):
+    with gzip.open(filepath, "rt", encoding="utf-8") as file:
+        data = [json.loads(line) for line in file]
+    return pd.DataFrame(data)
+
+# Load and Preprocess Dataset
+df = load_data("Software.jsonl.gz")
+print(f"Total records in the original dataset: {df.shape[0]}")
+
+# Print the dataset headers
+print("Dataset Columns:")
+print(df.columns)
+
+# Print a sample of the dataset
+sample_size = 5  # Define the number of rows you want to sample
+print(f"Sample of {sample_size} rows from the dataset:")
+print(df.sample(sample_size))
+
+# Sample a subset of the data
+sampled_df = df.sample(
+    frac=0.005, random_state=42
+)  # Adjusted 'frac' for speed (too much data!)
+print(f"Records in the sampled dataset: {sampled_df.shape[0]}")
+
+# Print the "title" column from the sampled dataset
+print("Text in the Sampled Dataset:")
+print(sampled_df["text"])
+
+# Preprocess Text
+def preprocess_text(text):
+    tokens = word_tokenize(text.lower())
+    tokens = [
+        word
+        for word in tokens
+        if word.isalpha() and word not in stopwords.words("english")
+    ]
+    return " ".join(tokens)
+
+sampled_df["processed_text"] = [
+    preprocess_text(text)
+    for text in tqdm(sampled_df["text"], desc="Preprocessing text")
+]
+
+# Extract Features
+vectorizer = TfidfVectorizer(ngram_range=(1, 2), max_features=1000)
+X = vectorizer.fit_transform(tqdm(sampled_df["processed_text"], desc="Vectorizing"))
+
+# Define Labels
+sampled_df["sentiment"] = pd.cut(
+    sampled_df["rating"],
+    bins=[0, 2, 4, 5],
+    labels=["negative", "neutral", "positive"],
+    include_lowest=True,
+)
+
+# Model Training
+X_train, X_test, y_train, y_test = train_test_split(
+    X, sampled_df["sentiment"], test_size=0.2, random_state=42
+)
+model = LogisticRegression(max_iter=1000)
+model.fit(X_train, y_train)
+predictions = model.predict(X_test)
+print(classification_report(y_test, predictions))
+
+# Comparison with VADER and TextBlob
+analyzer = SentimentIntensityAnalyzer()
+sampled_df["vader_sentiment"] = [
+    analyzer.polarity_scores(text)["compound"]
+    for text in tqdm(sampled_df["processed_text"], desc="Analyzing with VADER")
+]
+sampled_df["textblob_sentiment"] = [
+    TextBlob(text).sentiment.polarity
+    for text in tqdm(sampled_df["processed_text"], desc="Analyzing with TextBlob")
+]
+
+sampled_df["vader_sentiment"] = pd.cut(
+    sampled_df["vader_sentiment"],
+    bins=[-1, -0.05, 0.05, 1],
+    labels=["negative", "neutral", "positive"],
+    include_lowest=True,
+)
+sampled_df["textblob_sentiment"] = pd.cut(
+    sampled_df["textblob_sentiment"],
+    bins=[-1, -0.05, 0.05, 1],
+    labels=["negative", "neutral", "positive"],
+    include_lowest=True,
+)
+
+# Number of Reviews for each Sentiment
+print(sampled_df["sentiment"].value_counts())
+
+# Display Comparison Results
+print("Comparison of First 5 Predictions:")
+print(sampled_df[["sentiment", "vader_sentiment", "textblob_sentiment"]].head())
+
+# Model Evaluation
+
+# Predict Test Set Results
+y_pred = model.predict(X_test)
+
+# Evaluate Model
+print("Classification Report:")
+print(classification_report(y_test, y_pred))
+
+# Calculate Metrics Individually
+accuracy = accuracy_score(y_test, y_pred)
+precision = precision_score(y_test, y_pred, average="weighted")
+
+# 'weighted' Accounts for Label Imbalance
+recall = recall_score(y_test, y_pred, average="weighted")
+f1 = f1_score(y_test, y_pred, average="weighted")
+
+print(f"Accuracy: {accuracy:.2f}")
+print(f"Precision: {precision:.2f}")
+print(f"Recall: {recall:.2f}")
+print(f"F1 Score: {f1:.2f}")
+
+# Ensure Proper Execution
+if __name__ == "__main__":
+    try:
+        # Code execution check
+        print("Script executed successfully.")
+    except Exception as e:
+        print(f"An error occurred: {e}")
